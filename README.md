@@ -119,7 +119,7 @@ So first of all, we will record a list of currently running virtual machines int
 
 ```
 rm /tmp/savedvms
-for i in $(ps ax | grep VBox | grep comment | grep -v grep | awk '{ print $7};'); do echo Suspending $i...; echo $i >> /tmp/savedvms; vboxmanage controlvm $i savestate; done
+for i in $(ps ax | awk '/VBox/&&/comment/&&!/grep/{print $7}'); do echo Suspending $i...; echo $i >> /tmp/savedvms; vboxmanage controlvm $i savestate; done
 ```
 
 If you don't like that kind of scripting, you are of course welcome to just do that by hand.
