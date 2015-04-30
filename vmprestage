@@ -1,0 +1,264 @@
+#!/bin/bash
+
+###################################################
+#
+# Prestage script for virtual machines (VirtualBox)
+#
+# Copying from a list of directories like
+#
+# /data-intern/vmware/hot/xyz
+#
+# to a stage area like
+#
+# /data-backup/bru-prestage/vms-hot/data-intern/vmware/hot/xyz
+#
+# optionally pausing and starting a VM if it is
+# running.
+# 
+###################################################
+# (c) Matthias Nott, SAP. Licensed under WFTPL.
+###################################################
+
+###################################################
+#
+# Default Configurations (see usage function).
+#
+###################################################
+
+VBOXCFG=/root/.VirtualBox/VirtualBox.xml
+
+SOURCES=/data-intern/vmware:/data-extern/vmware
+
+#
+# append hot or warm or cold
+#
+STAGEAREA=/data-backup/bru-prestage/vms-
+
+
+###################################################
+# End of Configuration.
+###################################################
+
+#
+# Usage
+#
+usage(){
+cat <<EOF
+Usage: $0 [options] [hot|warm|cold]
+
+-h| --help                 :  Print this help.
+
+EOF
+}
+
+#
+# Parameter Parsing
+#
+parse() {
+  if [[ "$1" =~ ^((-{1,2})([Hh]$|[Hh][Ee][Ll][Pp])|)$ ]]; then
+    usage; exit 1
+  else
+    while [[ $# -gt 1 ]]; do
+      opt="$1"
+      shift;
+      case "$opt" in
+        *  ) echo "ERROR: Invalid option: \""$opt"\"" >&2; usage; exit 1;;
+      esac
+      if [[ "$1" == -* ]] || [[ "$1" == "" ]]; then declare ${opt}=""; else [[ $# -gt 1 ]] && shift; fi
+    done
+  fi
+  if [[ $# -lt 1 ]] || [[ "$1" == -* ]] || [[ "$2" == -* ]]; then
+    usage; exit 1
+  else
+    LEVEL="$1"
+  fi
+
+  if [[ "$LEVEL" != "hot" ]] && [[ "$LEVEL" != "warm" ]] && [[ "$LEVEL" != "cold" ]]; then
+    usage; exit 1;
+  fi
+}
+
+#
+# Get the List of running VMs
+#
+declare -A RUNNINGVMS
+getRunningVMs(){
+  for val in $(vboxmanage list runningvms); do
+    if [[ "$key" == "" ]]; then
+      key=$val
+    else
+      RUNNINGVMS["$val"]="$key"
+      key=""
+    fi
+  done
+  # Print the contents of the array
+  # for vm in "${!RUNNINGVMS[@]}"; do
+  #   echo "$vm => ${RUNNINGVMS["$vm"]}"
+  # done
+}
+
+#
+# Prepare copying data. Machines can be localized
+# in any subdirectores hot;warm;cold of any source,
+# and may optionally be configured, and even running.
+#
+run() {
+  getRunningVMs
+  array=(${SOURCES//:/ })
+  for i in "${!array[@]}"
+  do
+    SOURCE="${array[i]}"
+    if [[ ! -d "$SOURCE" ]]; then
+      echo Source directory $SOURCE does not exist. Review configuration.
+      exit 1;
+    fi
+    stage $SOURCE
+  done
+}
+
+#
+# Stage Process
+#
+declare -A STAGEDDIRS
+stage(){
+  SOURCE=$1
+
+  OFS=$IFS
+  IFS=$(echo -en "\n\b")
+
+  for vm in $(find "$SOURCE/$LEVEL" -maxdepth 2 -name "*.vbox" -type f)
+  do
+    #
+    # Check whether the VM is declared and running
+    #
+    #echo "Checking ${vm}..."
+    vmuid=$(grep "${vm}" "$VBOXCFG" | cut -d\" -f2)
+    if [[ "$vmuid" != "" ]]; then
+      runningvm="${RUNNINGVMS["$vmuid"]}"
+
+      if [[ "$runningvm" != "" ]]; then
+        vmdir=$(dirname "$vm")
+        echo Pausing $runningvm...
+        vboxmanage controlvm $vmuid savestate
+        if [[ ! -d "$STAGEAREA$LEVEL$SOURCE/$LEVEL" ]]; then
+          mkdir -p "$STAGEAREA$LEVEL$SOURCE/$LEVEL"
+        fi
+        rsync -avh --delete "$vmdir" "$STAGEAREA$LEVEL$SOURCE/$LEVEL/"
+        echo Resuming $runningvm...
+        vboxmanage startvm $vmuid -type vrdp
+        STAGEDDIRS["$vmdir"]="$vmdir"
+      fi
+    fi
+  done
+
+  #
+  # Stage remaining directories
+  #
+  for dir in $(find "$SOURCE/$LEVEL/" -mindepth 1 -maxdepth 1 -type d)
+  do
+    if [[ "${STAGEDDIRS["$dir"]}" == "" ]]; then
+      if [[ ! -d "$STAGEAREA$LEVEL$SOURCE/$LEVEL" ]]; then
+        mkdir -p "$STAGEAREA$LEVEL$SOURCE/$LEVEL"
+      fi
+      rsync -avh --delete "$dir" "$STAGEAREA$LEVEL$SOURCE/$LEVEL/" 
+    fi
+  done
+  
+  IFS=$OFS
+}
+
+
+parse $@
+run
+
+
+#
+# End of Script.
+#
+
+
+###################################################
+#
+# Some more comments
+#
+###################################################
+: <<'COMMENTS'
+
+This is a sample script that shows how to create a snapshot
+of all VMs (VirtualBox) before running a tape backup. The
+basic structure of the system is this:
+
+a) VMs can reside in a number of places, such as
+
+   /data-intern/vmware
+   /data-extern/vmware
+
+   Those locations are listed by the configuration variable
+
+   SOURCES=/data-intern/vmware:/data-extern/vmware
+
+   at the beginning of this script.
+   
+b) We want to differentiate between different relevance 
+   levels of VMS, called "hot", "warm", "cold" 
+
+   The sources hence contain directories such as
+
+   /data-intern/vmware/hot
+
+   and within those we assume to find virtual machine
+   directories that we want to backup.
+
+c) Those directories may correspond to virtual machines
+   that are declared to VirtualBox. If so, they have a
+   reference in the VirtualBox configuration file, 
+   configured as
+
+   VBOXCFG=/root/.VirtualBox/VirtualBox.xml
+
+   at the top of the script.
+
+   They not necessarily need to be declared to
+   VirtualBox, though, as they may refer to work
+   that just happens not be imported so far.
+
+d) If they are declared to VirtualBox, we must check
+   whether a given machine is currently running: In
+   that case, we want to pause it, copy the data of the
+   machine, and then resume it. Therefore, we need some
+   logic to request the currently running virtual machines
+   from VirtualBox.
+
+e) When we are copying data, we assume our target to be as
+   configured by the variable
+
+   STAGEAREA=/data-backup/bru-prestage/vms-
+
+   to which we append either hot, warm or cold. Since we
+   want to maintain the origin of our files we are going
+   to place there, we are going to replicate the full
+   path name into these directories, i.e.,
+
+   /data-intern/vmware/hot/xyz
+
+   is copied to a stage area like
+
+   /data-backup/bru-prestage/vms-hot/data-intern/vmware/hot/xyz
+
+f) Since each machine that we copy is offline (paused or
+   was not started) during the copy process, we can
+   speed up processing by using rsync. We need to do
+   this in two steps, as we first of all copy, on a 
+   one by one basis, the running virtual machines,
+   after which we copy everything else. This allows us
+   to have a minimal downtime per VM.
+
+g) Since we are using rsync, it really makes sense to
+   utilize snapshots with VirtualBox. VirtualBox will
+   write new changes to disk files to snapshot files
+   and not to the main disk files. Because of that, it
+   is a lot faster to copy the snapshot file, since the
+   disk file won't have changed. Regularly merge those
+   snapshots back if they grow too large.
+
+COMMENTS
