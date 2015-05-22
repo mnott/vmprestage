@@ -5,7 +5,11 @@ Welcome to vmprestage!
 Summary
 ---------
 
-This is a small helper script that you can utilize to copy VirtualBox virtual machines running on a Linux host from one or more directories in which you may hold those machines, into a pre-staging area from which backup tools such as the excellent [BRU](http://www.tolisgroup.com) can pick them up. I call this process pre-staging, since backup tools like BRU have their own staging mechanism, and this tool is typically run in advance. The script follows the idea of differentiating between machines that are frequently used (or, "hot"), those that are unfrequently used ("warm") and finally those that may mostly not ever be used ("cold"). This is a classification that you make. In my example, I hold virtual machines in directories, or source locations, like:
+This is a small helper script that you can utilize to copy VirtualBox virtual machines running on a Linux host from one or more directories in which you may hold those machines, into a pre-staging area from which backup tools such as the excellent [BRU](http://www.tolisgroup.com) can pick them up. I call this process pre-staging, since backup tools like BRU have their own staging mechanism, and this tool is typically run in advance.
+
+The repository also now contains some wrapper scripts that you can use to wrap vmprestage as part of a BRU backup job. See below under [Wrapper](#wrapper).
+
+The script follows the idea of differentiating between machines that are frequently used (or, "hot"), those that are unfrequently used ("warm") and finally those that may mostly not ever be used ("cold"). This is a classification that you make. In my example, I hold virtual machines in directories, or source locations, like:
 
 ```
 /data-intern/vmware
@@ -229,9 +233,6 @@ And since I have a *lot* of virtual machines, I wanted to have a classification 
 
 
 
-
-----------
-
 Parameters
 ---------
 
@@ -244,3 +245,68 @@ Usage: ./vmprestage [options] [hot|warm|cold]
 -h| --help                 :  Print this help.
 ```
 
+
+----------
+<a name="wrapper">Wrapper</a>
+---------
+
+The wrapper templates add to the scenario the following files:
+
+```
+backup.pre
+backup.post
+bru-wrapper
+wrappers/Monthly_Hot
+wrappers/Monthly_Warm
+wrappers/Monthly_Cold
+```
+
+The `backup.pre` and `backup.post` scripts are predefined names of files which, if they exist, will be executed by the BRU server before (`pre`) a backup job, and after (`post`). BRU will pass to those files the name of the backup job. *Note* that at the time of this writing, if you have an incremental job like `Daily_Hot` that has a job like `Weekly_Hot` as its parent, BRU will pass `Weekly_Hot` to the wrapper scripts.
+
+Both `backup.pre` and `backup.post` will then call the `bru-wrapper` script that I've written, passing either `PRE` or `POST` as first parameter and then adding the remaining parameters that had been received by BRU (for the moment, the backup job name). The job of `bru-wrapper` is to locate, inside the subdirectory `wrappers`, a file that has the exact same name as the backup job. *Note* that you may be on the safe side not using spaces in your job names. Also, *note, that the location of the `wrappers` directory is configurable inside the `bru-wrapper` script.
+
+Inside the `wrappers` directory I give three sample files which are mostly identical: They have functions for both the `pre` and the `post` phase, and they call the `vmprestage` script with the relevant parameter of either `hot`, `warm` or `cold`. *Note* that the script assumes `vmprestage` to be in the path; it is likely you'll have to modify that.
+
+So down to here, the only thing that you do is to drop both `backup-pre` and `backup-post` into your BRU directory - typically, `/usr/local/bru-server` - should those files already be there, you make sure to save them first and review how to integrate them. You also drop `bur-wrapper` in the same place, and you make sure all three files are executable (`chmod 755 backup-pre backup-post bru-wrapper `). You then create a subdirectory `wrappers` (`mkdir wrappers`) and start creating scripts for your backup jobs reusing the templates that I've given.
+
+Let's look at the templates, e.g., `Monthly_Hot`. At the top, there is essentially one variable that you will want to modify:
+
+```
+export MAILTO=mnott@mnsoft.org
+```
+
+If you set this variable, the script will send an email containing whatever you have written into the log file (variable `LOG` just above the `MAILTO` definition). Sending of the email is done using the `report` function, which you may want to look at if you use a different tool than `mutt` to send out mails from the command line.
+
+Then, most importantly, you'll see the actual `pre` and `post` functions which are the place where you want to write whatever has to happen before and after the backup job:
+
+```
+#
+# Pre phase
+#
+pre(){
+  echo "$PHASE phase for Job $JOB running" >>$LOG
+
+  # Put your actual script here
+  echo "" >>$LOG
+  vmprestage hot >>$LOG 2>&1
+
+  # Comment out if you don't want an email
+  report
+}
+
+#
+# Post phase
+#
+post(){
+  # echo "$PHASE phase for Job $JOB running" >>$LOG
+
+  # Put your actual script here 
+
+  # Comment out if you don't want an email 
+  # report
+}
+```
+
+In the `pre()` function I show writing something to the log file. I also show calling `vmprestage` and piping whatever output and errors it may show to the log file. I then show that I call the `report` function which is going to send out a mail.
+
+Since prestaging of virtual machines is logically a `pre` kind of job, in the `post` function I do nothing at all, i.e., I've commented out everything there. If for whatever reason you would do handling of virtual machines differently, i.e., like not first copying them to a second location but directly writing them to tape you'd use the `pre` function to hibernate the virtual machine, then BRU would do the writing to tape, and afterwards your `post` function would resume the virtual machine.
