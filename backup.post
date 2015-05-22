@@ -1,0 +1,41 @@
+#!/bin/bash
+
+###################################################
+#
+# Wrapper script that BRU invokes before any backup
+# job. It calls bru-wrapper and passes to it the
+# stage, i.e., "PRE" or "POST", as well as the name
+# of the backup job.
+#
+###################################################
+# (c) Matthias Nott, SAP. Licensed under WTFPL.
+###################################################
+
+###################################################
+#
+# Default Configurations
+#
+# Note that the only thing that changes between
+# the PRE and POST phase at this point is the
+# value of the PHASE variable below.
+#
+###################################################
+
+export PHASE=POST
+export WRAPPER=/usr/local/bru-server/bru-wrapper
+
+###################################################
+# End of Configuration.
+###################################################
+
+#
+# We exit gracefully should our wrapper not
+# exist.
+#
+if [[ ! -f "$WRAPPER" ]]; then exit 0; fi
+
+#
+# Call the wrapper
+#
+"$WRAPPER" "$PHASE" "$*" 
+

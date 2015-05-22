@@ -1,0 +1,85 @@
+#!/bin/bash
+
+###################################################
+#
+# Wrapper script for BRU to handle backup jobs.
+#
+# It gets one parameter: the phase (PRE or POST).
+#
+###################################################
+# (c) Matthias Nott, SAP. Licensed under WTFPL.
+###################################################
+
+###################################################
+#
+# Default Configurations
+#
+###################################################
+
+export JOB=$(basename $0)
+export PHASE=$1
+export LOG=/var/log/bru-wrapper-$RANDOM.log
+export MAILTO=mnott@mnsoft.org
+
+
+###################################################
+# End of Configuration.
+###################################################
+
+#
+# Pre phase
+#
+pre(){
+  echo "$PHASE phase for Job $JOB running" >>$LOG
+
+  # Put your actual script here
+  echo "" >>$LOG
+  vmprestage hot >>$LOG 2>&1
+
+  # Comment out if you don't want an email
+  report
+}
+
+#
+# Post phase
+#
+post(){
+  # echo "$PHASE phase for Job $JOB running" >>$LOG
+  
+  # Put your actual script here 
+ 
+  # Comment out if you don't want an email 
+  # report
+}
+
+#
+# Reporting: Mail results and remove log file
+#
+report(){
+  if [[ -f "$LOG" ]] && [[ "$MAILTO" != "" ]]; then
+    mutt -s "BRU Server Backup Job \"$JOB\": $PHASE Phase" $MAILTO <"$LOG"
+  fi
+}
+
+
+#
+# Call the relevant phase
+#
+# A bit overkill, but we don't want to just
+# $PHASE for obvious reasons :-)
+#
+case "$PHASE" in
+  PRE)
+    pre;;
+  POST)
+    post;;
+esac
+
+#
+# Clean up
+#
+if [[ -f "$LOG" ]]; then
+  rm "$LOG"
+fi
+
+

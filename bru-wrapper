@@ -1,0 +1,92 @@
+#!/bin/bash
+
+###################################################
+#
+# Wrapper script for BRU to handle backup jobs.
+#
+# It relies on having a subdirectory called
+# wrappers (configurable) that will contain
+# for, e.g., a job "Weekly_Hot" a script
+# with that same name.
+#
+# BRU will invoke a script backup.pre before
+# each backup job, on the server, and backup.post
+# after each backup job, passing into the script
+# the name of the backup job as single parameter
+#
+# This wrapper script will then be invoked by both,
+# where they'll pass, as first parameter, either
+# "PRE" or "POST" and as second parameter the name
+# of the backup job.
+#
+# It will then call e.g. Weekly_Hot passing either
+# PRE or POST as only parameter.
+#
+###################################################
+# (c) Matthias Nott, SAP. Licensed under WTFPL.
+###################################################
+
+###################################################
+#
+# Default Configurations
+#
+###################################################
+
+export WRAPPERS=/usr/local/bru-server/wrappers
+
+
+###################################################
+# End of Configuration.
+###################################################
+
+#
+# Get the Parameters
+#
+PHASE="$1"
+shift
+
+JOB="$*"
+
+#
+# Check for existence of wrappers directory
+#
+# Note that we do this gracefully, as we do not
+# want to interrupt BRU. If the directory is not
+# there, we just exit
+#
+if [[ ! -d "$WRAPPERS" ]] || [[ ! -f "$WRAPPERS/$JOB" ]]; then exit 0; fi
+
+#
+# Call the script
+#
+"$WRAPPERS/$JOB" $PHASE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
