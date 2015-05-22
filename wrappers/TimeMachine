@@ -1,0 +1,287 @@
+#!/bin/bash
+
+###################################################
+#
+# Wrapper script for BRU to handle backup jobs.
+#
+# It gets one parameter: the phase (PRE or POST).
+#
+###################################################
+# (c) Matthias Nott, SAP. Licensed under WTFPL.
+###################################################
+
+###################################################
+#
+# Default Configurations
+#
+###################################################
+
+export JOB=$(basename $0)
+export PHASE=$1
+export LOG=/var/log/bru-wrapper-$RANDOM.log
+export MAILTO=mnott@mnsoft.org
+
+###################################################
+#
+# Script specific Configurations
+#
+###################################################
+#
+# Description: This is a wrapper script that allows
+# BRU to handle Apple TimeMachine backups to be 
+# copied to tape even if the during the tape
+# operation there should be a backup that is coming
+# in. Normally, this would lead to data that is 
+# potentially inconsistent on tape. The solution is
+# to create a snapshot before the backup runs, and
+# to backup that snapshot - and to remove that 
+# later.
+#
+# Should we have an incoming backup, that data will
+# be written safely, but will not be visible to
+# BRU while BRU is running its backup.
+#
+# For this to run, we first need to set up a share
+# for TimeMachine on Linux. For this we need 
+# netatalk. There are descriptions on the Internet
+# on how to do it; here's the very short version
+# assuming Ubuntu:
+#
+# First we install netatalk:
+#
+# apt-get install netatalk
+#
+# Then we add a share for timemachine. In the file
+# 
+# /etc/netatalk/afp.conf
+#
+# we need a section like so:
+#
+# [TimeMachine]
+# path = /data-backup/timemachine
+# time machine = yes
+# vol size limit = 2000000
+#
+# In the file
+#
+# /etc/netatalk/AppleVolumes.default
+#
+# We have a line
+#
+# /data-backup/timemachine    TimeMachine   allow:@users
+#
+# where users is some group that has write access
+# to the location /data-backup/timemachine. TimeMachine
+# here is then the share name seen by the Apple clients.
+#
+# We have to create that mount point of course:
+#
+# mkdir -f /data-backup/timemachine
+#
+# In the above case, the size is limited to 
+# about 2 TB, which is great since it will fit
+# on one LTO-6 Tape. Also, we actually have a
+# volume group (using LVM) that is mounted to
+# /data-backup. Using the command vgs, we see
+#
+# VG          #PV #LV #SN Attr   VSize  VFree 
+# data-backup   1   1   0 wz--n-  8.19t 500.00g
+#
+# Now, in our case, we actually did not have any
+# free space available, so we had to reduce the
+# size of our data-backup voluem firstany
+# free space available, so we had to reduce the
+# size of our data-backup voluem first.
+#
+# We did this by first unmounting the volume:
+#
+# umount /data-backup
+#
+# Then we checked the volume to be sure it is
+# clean:
+#
+# e2fsck -f /dev/mapper/data--backup-Name
+#
+# Finally we reduced the size of the volume:
+#
+# lvresize -r -L -500G /dev/mapper/data--backup-Name
+#
+# This calls resize2fs as part of the process and
+# you'll end up with a reduced volume as shown
+# by lvs:
+#
+# LV   VG          Attr      LSize
+# Name data-backup -wi-ao---  7.70t
+#
+# Of course you should make sure that you have a
+# backup of that volume before you do something
+# like this. Now anyway, this gives us 500 GB 
+# of space that can be used for changing data
+# whilst we are running a backup.
+#
+# What remains to be done is to just utilize
+# this script.
+#
+###################################################
+
+
+#
+# VOLUME is the LVM volume on which the target for
+# the TimeMachine backup resides.
+#
+export VOLUMEGROUP=/dev/mapper/data--backup
+
+#
+# VOLUMENAME is the name of the volume to create a
+# snapshot of. Together with VOLUMEGROUP it is
+# mounted e.g. as /dev/mapper/data--backup-Name
+#
+export VOLUMENAME=Name
+
+#
+# SNAPSHOT is the name of the snapshot volume that
+# we are going to temporarily create. lvcreate 
+# does not allow to use snapshot, which is a
+# reserved name, so we'll use snap.
+#
+export SNAPSHOT=snap
+
+#
+# This is the size we allow for the snapshot to
+# have. We assume that during our backup, TM
+# won't suddenly save more than that amount of
+# data.
+#
+export SIZE=500G
+
+#
+# This is the mount point to which we will be
+# mounting the snapshot. The location that we
+# want to backup inside BRU is then going to
+# be inside. So for example, we have here
+#
+# /data-backup/timemachine
+#
+# When the PRE script is run, we will have
+# a snapshot of that as
+#
+# /data-backup/bru-prestage/snap/timemachine
+#
+# This is the directory we want to include into
+# BRU. To do so, we need to mount "snap" once,
+# and the easiest way to do so is to just run
+# the PRE script manually:
+#
+# ./TimeMachine PRE
+#
+# then to create the BRU job that will now be
+# able to see the directory
+#
+# /data-backup/bru-prestage/snap/timemachine
+#
+# Once the BRU job is created, we are going
+# to remove the snapshot as it will then be
+# created automatically by BRU:
+#
+# ./TimeMachine POST
+#
+# So our mount point here is where we want
+# to mount the snapshot to:
+#
+export MOUNTPOINT=/data-backup/bru-prestage/snap
+
+#
+# PLOG is our persistent log file that we are
+# going to write to the snapshot. This is so
+# that we are going to maintain a log status
+# across the pre/post phase.
+#
+export PLOG=$MOUNTPOINT/log.log
+
+
+###################################################
+# End of Configuration.
+###################################################
+
+#
+# Pre phase
+#
+pre(){
+  echo -e "$PHASE phase for Job $JOB running\n" >>$LOG
+
+  # Put your actual script here
+
+  # Make sure our target mountpoint exists. If not
+  # create it.
+
+  if [[ ! -d "$MOUNTPOINT" ]]; then
+    mkdir -p "$MOUNTPOINT" >>$LOG 2>&1
+  fi
+
+  # Create the snapshot
+  lvcreate -s -n $SNAPSHOT -L$SIZE $VOLUMEGROUP-$VOLUMENAME >>$LOG 2>&1
+
+  # Mount the snapshot. We could mount it read-only
+  # using -o ro, but we want to be clever and are 
+  # going to write our logfile there, for our post
+  # phase to pick it up. This is a deviation from
+  # the other pre/post templates.
+  mount $VOLUMEGROUP-$SNAPSHOT $MOUNTPOINT >>$LOG 2>&1
+
+  # Save away our logfile for later
+  cp -a $LOG $PLOG >/dev/null 2>&1
+  
+  # report
+}
+
+#
+# Post phase
+#
+post(){
+  # Restore our preserved log file
+  cp -a $PLOG $LOG >/dev/null 2>&1
+
+  # Write a log message
+  echo -e "\n$PHASE phase for Job $JOB running\n" >>$LOG
+  
+  # Unmount the snapshot
+  umount -f $MOUNTPOINT >>$LOG 2>&1
+
+  # Remove the snapshot
+  lvremove -f $VOLUMEGROUP-$VOLUMENAME >>$LOG 2>&1
+  
+  # Comment out if you don't want an email 
+  report
+}
+
+#
+# Reporting: Mail results and remove log file
+#
+report(){
+  if [[ -f "$LOG" ]] && [[ "$MAILTO" != "" ]]; then
+    mutt -s "BRU Server Backup Job \"$JOB\": $PHASE Phase" $MAILTO <"$LOG"
+  fi
+}
+
+
+#
+# Call the relevant phase
+#
+# A bit overkill, but we don't want to just
+# $PHASE for obvious reasons :-)
+#
+case "$PHASE" in
+  PRE)
+    pre;;
+  POST)
+    post;;
+esac
+
+#
+# Clean up
+#
+if [[ -f "$LOG" ]]; then
+  rm "$LOG"
+fi
+
+
