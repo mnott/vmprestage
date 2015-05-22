@@ -126,7 +126,7 @@ stage(){
   OFS=$IFS
   IFS=$(echo -en "\n\b")
 
-  for vm in $(find "$SOURCE/$LEVEL" -maxdepth 2 -name "*.vbox" -type f)
+  for vm in $(find "$SOURCE/$LEVEL" -name "*.vbox" -type f)
   do
     #
     # Check whether the VM is declared and running
